@@ -1,0 +1,224 @@
+---
+title: "Implémention en R"
+output:
+  pdf_document: default
+  number_sections: true
+---
+\setcounter{page}{15}
+
+# I. Un estimateur simple de la densité :l'histogramme
+
+## Illustration graphique du choix du nombre de classes.
+
+On va illustrer l'importance de bien choisir le nombre de classes par un exemple faisant intervenir une densité bimodale. On va pour cela simuler un mélange de deux lois gaussiennes : la densité simulée est $$f(x) = \frac{1}{\sqrt{2\pi}} \exp\left(-\frac{(x - 2)^2}{2}\right) + \exp\left(-\frac{(x - 6)^2}{2}\right)$$
+
+On devrait donc, si l'approximation par l'histogramme est bien faite, se retrouver avec deux "cloches" qui se chevauchent un petit peu (écart-type=1) et qui sont centrées en 2 et 6 respectivement.
+
+Simulation d'un échantillon de taille n=500 de loi de densité $f$ :
+
+```{r}
+
+f=function(x){0.5*dnorm(x,mean=2)+0.5*dnorm(x,mean=6)}
+
+sim=function(n){
+X=rnorm(n,2,1)
+Y=rnorm(n,6,1)
+ber=rbinom(n=n,size=1,prob=0.5)
+return(ber*X+(1-ber)*Y)}
+
+Z=sim(500)
+
+```
+
+On estime la densité par un histogramme (on utilise ici la bibliothèque *`ggplot2`*) et on rajoute la vraie densité $f$ en rouge :
+
+```{r,fig.height3, fig.width=12}
+
+library(ggplot2)
+p<-ggplot(data.frame(x=Z),aes(x))+labs(x="",y="")
+p1<-p+ geom_histogram(aes(y=..density..),color="black",fill="white")+
+stat_function(fun=f,col='red')+
+labs(title="nb de classes= 30")
+p1
+
+```
+
+La fonction histogram dans ggplot calcule un histogramme avec 30 classes par défaut (ce qu'il signale d'ailleurs). Ce n'est donc pas la valeur optimale en général.
+
+Essayons avec d'autres valeurs du nombre de classes (=bins).
+
+```{r, fig.height=4, fig.width=12}
+
+p1<-p+
+geom_histogram(aes(y=..density..),bins=3, color="black",fill="white")+
+stat_function(fun=f,col='red',xlim=c(-4,12))+
+labs(title="nb de classes = 3")
+
+p2<-p+
+geom_histogram(aes(y=..density..),bins=10, color="black",fill="white")+
+stat_function(fun=f,col='red',xlim=c(-4,12))+
+labs(title="nb de classes = 10")
+
+p3<-ggplot(data.frame(x=Z),aes(x))+
+geom_histogram(aes(y=..density..),bins=100, color="black",fill="white")+
+stat_function(fun=f,col='red',xlim=c(-4,12))+
+labs(title="nb de classes = 100",x="",y="")
+library(gridExtra)#pour faire apparaitre les trois figures en même temps
+grid.arrange(p1,p2,p3,nrow=1)
+
+```
+
+On peut aussi indiquer le pas h (binwidth) plutôt que le nombre de classes (bins).
+
+On constate donc que, avec une fenêtre h trop petite, c'est-à-dire avec un trop grand nombre de classes, on fait apparaitre trop de variations souvent insignifiantes (variance trop grande). Au contraire avec une fenêtre h trop grande, on a une approche trop grossière (biais trop grand) et une distribution peu discriminante : en particulier ici on ne voit même plus qu'il s'agit d'une distribution bimodale . On voit qu'il faut trouver un compromis entre le biais (au carré) et la variance, compromis qu'on va illustrer plus en détail plus loin, par le calcul.
+
+Il existe d'ailleurs dans R des estimations de la taille optimale du pas h, cf l'aide en ligne ou la page wikipedia sur l'histogramme. L'estimateur par histogramme étant présenté ici essentiellement à titre illustratif, nous ne donnons pas plus de détails sur le sujet. Des détails plus précis seront donnés pour l'estimateur qui nous intéresse vraiment : l'estimateur à noyau.
+
+Evidemment le nombre optimal de classes dépend de n. Illustrons ceci en changeant la taille de l'échantillon : on passe de 500 à 50000.
+
+```{r ,fig.height=3, fig.width=12}
+
+Z=sim(50000)
+p<-ggplot(data.frame(x=Z),aes(x))+labs(x="",y="")
+p1<-p+
+geom_histogram(aes(y=..density..),color="black",fill="white")+
+stat_function(fun=f,col='red')+
+labs(title="nb de classes=30")
+p2<-ggplot(data.frame(x=Z),aes(x))+
+geom_histogram(aes(y=..density..),bins=100,color="black",fill="white")+
+stat_function(fun=f,col='red')+
+labs(title="nb de classes=100")
+grid.arrange(p1,p2,nrow=1)
+
+```
+
+On voit donc qu'avec un nombre de classes égal à 100, on a, conrairement à précédemment, un très bon choix. La taille optimale du nombre de classes est croissante avec n, autrement dit, le pas h optimal décroit avedc n, ce que l'on va illustrer plus tard avec l'estimateur à noyau de fenêtre h.
+
+Remarquez que l'on fait deux approximation successives : une première approximation quand on approche la densité par une fonction constante par morceaux, et ensuite une deuxième approximation quand on approche chaque constante à l'aide des données.
+
+
+# II. Estimateurs à noyaux
+
+## Les noyaux usuels :
+
+Voici quelques exemples de noyaux les plus communément utilisées :
+
+-   Noyau uniforme (rectangulaire):
+
+$$ K(t) = \frac{1}{2} \quad \text{si } t \in [-1, 1] $$
+
+-   Noyau triangulaire:
+
+$$ K(t) = \frac{1 - |t|}{2} \quad \text{si } t \in [-1, 1] $$
+
+-   Noyau d'Epanechnikov:
+
+$$ K(t) = \frac{3}{4}(1 - t^2) \quad \text{si } t \in [-1, 1] $$
+
+-   Noyau de biweight:
+
+$$ K(t) = \frac{15}{16}(1 - t^2)^2 \quad \text{si } t \in [-1, 1] $$
+
+-   Noyau gaussien:
+
+$$ K(t) = \frac{1}{\sqrt{2\pi}} e^{-\frac{1}{2} t^2} \quad \text{si } t \in \mathbb{R} $$
+
+La représentation graphique des quelques noyaux définis ci dessus est donnée par :
+
+```{r ,fig.height=6, fig.width=10}
+
+K1=function(t){(1-abs(t))*ifelse(abs(t)<=1,1,0)}
+K2=function(t){(15/16)*((1-t^2)^2)*ifelse(abs(t)<=1,1,0)}
+K3=function(t){dnorm(t)}
+K4=function(t){ifelse(abs(t)<=1,(3/4)*(1-t^2),0)}
+
+op = par(mfrow= c(2,2))
+curve(K1(x),-1,1,ylab="K(x)",main="Triangulaire")
+curve(K2(x),-1,1,ylab="K(x)",main="Biweight")
+curve(K3(x),-4,4,ylab="K(x)",main="Gaussien")
+curve(K4(x),-1,1,ylab="K(x)",main="Epanechikov")
+
+```
+
+## Le paramètre de h fixe, et n varié
+
+Nous allons étudier le cas où le paramétre de lissage ou la fenêtre $$ h= n^{\frac{-1}{5}} \ $$ est fixé  et nous prenons differentes valeurs de la taille de l'échantillon $(n = 50; n = 100; n = 500)$; et K est un noyau normal $$ K(t) = \frac{1}{\sqrt{2\pi}} e^{-\frac{1}{2} t^2} \quad \text{si } t \in \mathbb{R} $$.
+
+```{r, fig.height=4, fig.width=10}
+
+n=50
+X=rnorm(n)
+K=function(t){(1/sqrt(2*pi))*exp(-0.5*t^2)}
+h=n^-.2
+# Initiation
+s=100
+a=min(X) #borne inf
+b=max(X) # borne sup
+x=seq(a,b,length=s) # Intervalle [a,b]
+V=numeric(n)
+fn=numeric(s)
+for(j in 1 :s){
+for(i in 1 :n){ V[i]=K((x[j]-X[i])/h)}
+fn[j]=sum(V)/(n*h)}
+# Graphes
+op=par(mfrow=c(1,3))
+plot(x,fn,xlab="x",ylab="fn(x)",main="n=50",type='l',col="red", lwd= 2)
+lines(x,dnorm(x),lwd= 2)
+#####Pour n =100
+n=100
+X=rnorm(n)
+h=n^-.2
+V=numeric(n)
+for(j in 1 :s){
+for(i in 1 :n){ V[i]=K((x[j]-X[i])/h) }
+fn[j]=sum(V)/(n*h)}
+plot(x,fn,xlab="x", ylab="fn(x)", main="n=100",type='l',col="red", lwd= 2)
+lines(x,dnorm(x),lwd= 2)
+#####Pour n =500
+n=500
+X=rnorm(n)
+h=n^-.2
+V=numeric(n)
+for(j in 1 :s){
+for(i in 1 :n){ V[i]=K((x[j]-X[i])/h) }
+fn[j]=sum(V)/(n*h)}
+plot(x,fn,xlab="x", ylab="fn(x)", main="n=500",type='l',col="red", lwd= 2)
+lines(x,dnorm(x),lwd= 2)
+
+```
+
+Nous remarquons sur le graphe si dessus que quand n est grand l'estimateur $fn$ est plus proche de la fonction $f$ (estimateur lisse), ce qui implique la convergence de l'estimateur.
+
+## Choix de paramètre de lissage :
+
+L'estimation par noyaux peut se faire avec différentes méthodes. On peut utiliser la fonction density du package stat. Cette procédure n'estime que des densités à une seule variable. Pour des fonctions multivariées, on peut utiliser par exemple la fonction kde du package ks (de 1 à 6 variables).
+
+Par défaut le noyau utilisé est le noyau gaussien, il est possible de changer de noyau avec l'option kernel. On va en fait utiliser la version de ggplot pour représenter l'estimateur à noyau. La fonction qui permet de dessiner l'estimateur à noyau est *`geom_density`*.
+
+Le paramètre représentant le fenêtre h s'appelle bw (comme bandwidth).
+
+On illustre l'influence du choix de la fenêtre. On tire les mêmes conclusions que pour l'histogramme.
+
+```{r ,fig.height=8, fig.width=10}
+
+p<-ggplot(data.frame(x=Z),aes(x))+labs(x="",y="")
+p1<-p+geom_density(bw=0.1)+stat_function(fun=f,col='red',alpha=0.4)+ggtitle("h=0.1")
+p2<-p+geom_density(bw=0.5)+stat_function(fun=f,col='red',alpha=0.4)+ggtitle("h=0.5")
+p3<-p+geom_density(bw=0.8)+stat_function(fun=f,col='red',alpha=0.4)+ggtitle("h=0.8")
+p4<-p+geom_density(bw=1.2)+stat_function(fun=f,col='red',alpha=0.4)+ggtitle("h=1.2")
+grid.arrange(p1,p2,p3,p4,nrow=2,ncol=2)
+
+```
+
+Pour finir, on illustre le choix de deux fenêtres calculées à partir des données. L'une est la méthode de Sheather et Jones (SJ) et l'autre est basée sur la validation croisée, qui sera vue en fin de chapitre (ucv=unbiased cross-validation).
+
+```{r,fig.height=3, fig.width=10}
+
+p<-ggplot(data.frame(x=Z),aes(x))+labs(x="",y="")
+p5<-p+geom_density(bw="ucv")+stat_function(fun=f,col='red',alpha=0.4)+ggtitle("ucv")
+p6<-p+geom_density(bw="SJ")+stat_function(fun=f,col='red',alpha=0.4)+ggtitle("SJ")
+grid.arrange(p5,p6,ncol=2)
+
+
+```
+
